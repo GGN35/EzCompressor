@@ -1,8 +1,8 @@
-"""EzCompressor - sidechain ducker for Windows.
+"""EzCompressor - Windows için sidechain ducker.
 
-Reads the peak level of a source (input device, output device or app) and
-lowers the Windows volume of a target (output device or app) like a
-compressor: threshold, ratio, attack, release, max reduction.
+Bir kaynağın (giriş aygıtı, çıkış aygıtı veya uygulama) tepe seviyesini okur
+ve bir hedefin (çıkış aygıtı veya uygulama) Windows ses seviyesini kompresör
+gibi kısar: threshold, ratio, attack, release, max kısma.
 """
 import json
 import math
@@ -13,9 +13,9 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
-# Use the multithreaded COM apartment everywhere: COM objects made in the
-# engine thread may be released by the garbage collector in the UI thread.
-sys.coinit_flags = 0  # COINIT_MULTITHREADED, must be set before comtypes import
+# Her yerde çok iş parçacıklı COM apartmanı kullan: motor thread'inde oluşan
+# COM nesneleri, arayüz thread'inde çöp toplayıcı tarafından serbest bırakılabilir.
+sys.coinit_flags = 0  # COINIT_MULTITHREADED, comtypes import edilmeden önce ayarlanmalı
 import comtypes
 from comtypes import CLSCTX_ALL
 
@@ -33,12 +33,12 @@ import pystray
 from PIL import Image, ImageDraw
 
 APP_NAME = "EzCompressor"
-# Settings live next to the .exe (or the script when run from source).
+# Ayarlar .exe dosyasının (kaynaktan çalışırken betiğin) yanında tutulur.
 APP_DIR = os.path.dirname(sys.executable if getattr(sys, "frozen", False)
                           else os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, "EzCompressor.json")
 OLD_CONFIG_PATH = os.path.join(os.environ.get("APPDATA", "."), APP_NAME, "config.json")
-TICK = 0.01  # control loop period (s)
+TICK = 0.01  # kontrol döngüsü periyodu (sn)
 MIN_DB = -90.0
 
 DEFAULTS = {
@@ -57,12 +57,12 @@ DEFAULTS = {
 
 
 # --------------------------------------------------------------------------
-# Audio endpoints
+# Ses uç noktaları
 # --------------------------------------------------------------------------
-# Channel keys: "in:<device id>", "out:<device id>", "app:<process name>"
+# Kanal anahtarları: "in:<aygıt id>", "out:<aygıt id>", "app:<işlem adı>"
 
 def list_channels():
-    """Return (sources, targets) as lists of (key, label)."""
+    """(kaynaklar, hedefler) listelerini (anahtar, etiket) çiftleri olarak döndürür."""
     sources, targets = [], []
     apps = set()
     for dev in AudioUtilities.GetAllDevices():
@@ -87,13 +87,13 @@ def _imm_device(dev_id):
 
 
 def _activate(dev, iface):
-    # QueryInterface keeps COM refcounts right; ctypes.cast would not
-    # AddRef and the object gets released twice by the garbage collector.
+    # QueryInterface COM referans sayısını doğru tutar; ctypes.cast AddRef
+    # yapmaz ve nesne çöp toplayıcı tarafından iki kez serbest bırakılır.
     return dev.Activate(iface._iid_, CLSCTX_ALL, None).QueryInterface(iface)
 
 
 def _device_sessions(dev_id):
-    """Yield (process name, IAudioSessionControl2) for a render device."""
+    """Bir çıkış aygıtı için (işlem adı, IAudioSessionControl2) üretir."""
     try:
         mgr = _activate(_imm_device(dev_id), IAudioSessionManager2)
         enum = mgr.GetSessionEnumerator()
@@ -122,7 +122,7 @@ def _render_device_ids():
 
 
 class Source:
-    """Peak meter for a device or for all sessions of an app."""
+    """Bir aygıtın veya bir uygulamanın tüm oturumlarının tepe ölçeri."""
 
     def __init__(self, key):
         kind, ident = key.split(":", 1)
@@ -134,8 +134,8 @@ class Source:
             dev = _imm_device(ident)
             self.meters = [_activate(dev, IAudioMeterInformation)]
             if kind == "in":
-                # A capture endpoint only meters while a stream is open,
-                # so keep a silent shared-mode stream running.
+                # Kayıt aygıtı yalnızca açık bir akış varken ölçüm yapar,
+                # bu yüzden sessiz bir paylaşımlı mod akışı açık tutulur.
                 c = _activate(dev, IAudioClient)
                 fmt = c.GetMixFormat()
                 c.Initialize(0, 0, 2_000_000, 0, fmt, None)
@@ -173,17 +173,17 @@ class Source:
 
 
 class Target:
-    """Volume control for a device or all sessions of an app.
+    """Bir aygıtın veya bir uygulamanın tüm oturumlarının ses kontrolü.
 
-    The normal (un-ducked) volume is the fixed 'level' setting, not the
-    volume read at start: a volume left lowered by a crash or by another
-    instance would otherwise become the new normal.
+    Normal (kısılmamış) ses, başlangıçta okunan ses değil sabit 'level'
+    ayarıdır; aksi halde bir çökme veya başka bir kopya yüzünden kısık
+    kalmış ses yeni normal kabul edilirdi.
     """
 
     def __init__(self, key, level):
         kind, ident = key.split(":", 1)
         self.kind, self.ident = kind, ident
-        self.vols = {}  # id -> interface
+        self.vols = {}  # id -> arayüz
         self.last_refresh = 0.0
         self.last_gr = None
         if kind == "out":
@@ -197,7 +197,7 @@ class Target:
     def set_level(self, level):
         self.level = level
         if self.kind == "out":
-            # map the Windows volume-slider scalar to dB once
+            # Windows ses kaydırıcısı değerini bir kez dB'ye çevir
             ev = self.vols["dev"]
             ev.SetMasterVolumeLevelScalar(level, None)
             self.base_db = ev.GetMasterVolumeLevel()
@@ -213,7 +213,7 @@ class Target:
                 seen.add(sid)
                 if sid not in self.vols:
                     self.vols[sid] = ctl.QueryInterface(ISimpleAudioVolume)
-                    self.last_gr = None  # force apply to the new session
+                    self.last_gr = None  # yeni oturuma uygulamayı zorla
         for sid in list(self.vols):
             if sid not in seen:
                 self.vols.pop(sid)
@@ -248,7 +248,7 @@ class Target:
 
 
 # --------------------------------------------------------------------------
-# Compressor engine
+# Kompresör motoru
 # --------------------------------------------------------------------------
 
 class Engine(threading.Thread):
@@ -269,7 +269,7 @@ class Engine(threading.Thread):
         comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
         src = tgt = None
         env = 0.0
-        power = 0.0  # smoothed squared peak for the level detector
+        power = 0.0  # seviye dedektörü için yumuşatılmış tepe karesi
         try:
             while not self.stop_evt.is_set():
                 if self.rebuild.is_set():
@@ -295,8 +295,8 @@ class Engine(threading.Thread):
 
                 s = self.settings
                 peak = src.peak() if src else 0.0
-                # Sensitivity 100% follows peaks (~5 ms), 0% averages the
-                # signal power over ~1 s for a calmer, mean-based level.
+                # Hassasiyet %100 tepeleri izler (~5 ms), %0 sinyal gücünün
+                # ~1 sn'lik ortalamasını alır; daha sakin, ortalamaya dayalı seviye.
                 tau = 1000 * 0.005 ** (s["sensitivity"] / 100)
                 coef = math.exp(-TICK * 1000 / tau)
                 power = peak * peak + (power - peak * peak) * coef
@@ -305,7 +305,7 @@ class Engine(threading.Thread):
 
                 over = level - s["threshold"]
                 if s["static"]:
-                    # fixed reduction while the source is above threshold
+                    # kaynak threshold'un üstündeyken sabit kısma
                     target_gr = s["range"] if over > 0 else 0.0
                 else:
                     target_gr = over * (1 - 1 / s["ratio"]) if over > 0 else 0.0
@@ -328,7 +328,7 @@ class Engine(threading.Thread):
 
 
 # --------------------------------------------------------------------------
-# UI
+# Arayüz
 # --------------------------------------------------------------------------
 
 def load_settings():
@@ -364,7 +364,7 @@ def make_icon(on):
 class App:
     def __init__(self, start_hidden=False):
         self.s = load_settings()
-        save_settings(self.s)  # create/migrate the file next to the exe
+        save_settings(self.s)  # exe'nin yanındaki dosyayı oluştur/taşı
         self.engine = Engine(self.s)
         self.engine.request_rebuild()
         self.engine.start()
@@ -382,7 +382,7 @@ class App:
         if start_hidden:
             self.root.withdraw()
 
-    # ---- layout ----
+    # ---- yerleşim ----
     def _build_ui(self):
         f = ttk.Frame(self.root, padding=12)
         f.grid(sticky="nsew")
@@ -460,7 +460,7 @@ class App:
     def _on_static(self, save=True):
         static = self.static_var.get()
         self.s["static"] = static
-        # static mode: ratio is unused, 'range' is the fixed reduction amount
+        # statik mod: ratio kullanılmaz, 'range' sabit kısma miktarıdır
         self.param_scales["ratio"].state(["disabled"] if static else ["!disabled"])
         self.param_labels["ratio"].state(["disabled"] if static else ["!disabled"])
         self.param_labels["range"].config(text="Kısma miktarı" if static else "Max kısma")
@@ -484,7 +484,7 @@ class App:
         if save:
             save_settings(self.s)
 
-    # ---- channels ----
+    # ---- kanallar ----
     def refresh_channels(self):
         self.sources, self.targets = list_channels()
         for cb, items, key in ((self.src_cb, self.sources, "source"),
@@ -492,7 +492,7 @@ class App:
             keys = [k for k, _ in items]
             cur = self.s.get(key)
             if cur and cur not in keys and cur.startswith("app:"):
-                # keep app selection even if it is not playing right now
+                # uygulama şu an ses çalmıyor olsa da seçimi koru
                 items.append((cur, f"▶ {cur[4:]} (kapalı)"))
                 keys.append(cur)
             cb["values"] = [l for _, l in items]
@@ -509,7 +509,7 @@ class App:
         save_settings(self.s)
         self.engine.request_rebuild()
 
-    # ---- on/off ----
+    # ---- açık/kapalı ----
     def toggle(self):
         self.s["enabled"] = not self.s["enabled"]
         save_settings(self.s)
@@ -525,7 +525,7 @@ class App:
                                bg="#2ecc71" if on else "#7f8c8d",
                                fg="white", activebackground="#27ae60" if on else "#95a5a6")
 
-    # ---- meters ----
+    # ---- göstergeler ----
     def _tick(self):
         lvl, gr = self.engine.level_db, self.engine.gr_db
         self._bar(self.level_cv, (lvl - MIN_DB) / -MIN_DB, "#3498db",
@@ -545,7 +545,7 @@ class App:
             x = w * marker
             cv.create_line(x, 0, x, h, fill="white", width=2)
 
-    # ---- tray ----
+    # ---- tepsi ----
     def _setup_tray(self):
         menu = pystray.Menu(
             pystray.MenuItem("Göster", lambda: self.root.after(0, self.show), default=True),
@@ -567,7 +567,7 @@ class App:
     def quit(self):
         save_settings(self.s)
         self.engine.stop_evt.set()
-        self.engine.join(timeout=2)  # restores target volume
+        self.engine.join(timeout=2)  # hedef sesi geri yükler
         self.tray.stop()
         self.root.destroy()
 
@@ -584,7 +584,7 @@ def already_running():
 
 if __name__ == "__main__":
     if already_running():
-        # two instances would fight over the same volume
+        # iki kopya aynı ses seviyesi için birbiriyle çakışır
         import ctypes
         ctypes.windll.user32.MessageBoxW(None, "EzCompressor zaten çalışıyor (tepsi simgesine bakın).", APP_NAME, 0x40)
         sys.exit(0)
